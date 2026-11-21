@@ -6,18 +6,30 @@ from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, 
 
 def create_spark_session():
     if os.name == "nt":
-        if not os.environ.get("HADOOP_HOME"):
-            os.environ["HADOOP_HOME"] = r"C:\hadoop"
-        hadoop_bin = r"C:\hadoop\bin"
+        hadoop_home = os.environ.get("HADOOP_HOME") or r"C:\hadoop"
+        os.environ["HADOOP_HOME"] = hadoop_home
+
+        hadoop_bin = os.path.join(hadoop_home, "bin")
         path = os.environ.get("PATH", "")
-        if os.path.normcase(os.path.normpath(hadoop_bin)) not in (
-            os.path.normcase(os.path.normpath(entry)) for entry in path.split(os.pathsep)
-        ):
+        path_entries = [
+            os.path.normcase(os.path.normpath(entry))
+            for entry in path.split(os.pathsep)
+            if entry
+        ]
+
+        if os.path.normcase(os.path.normpath(hadoop_bin)) not in path_entries:
             os.environ["PATH"] = hadoop_bin + os.pathsep + path
-    return SparkSession.builder.master("local[*]").appName("Process Properties").getOrCreate()
 
+    return (
+        SparkSession.builder
+        .master("local[*]")
+        .appName("Process Properties")
+        .getOrCreate()
+    )
 
-def load_properties(spark: SparkSession) -> DataFrame:
+def load_properties(
+    spark: SparkSession, path: str = "data/raw/properties.json"
+) -> DataFrame:
     schema = StructType(
         [
             StructField("titulo", StringType(), True),
@@ -42,7 +54,7 @@ def load_properties(spark: SparkSession) -> DataFrame:
     return (
         spark.read.schema(schema)
         .option("multiLine", True)
-        .json("data/raw/properties.json")
+        .json(path)
     )
 
 
@@ -108,9 +120,11 @@ def save_curated_data(
 
 
 def main():
+    raw_path = os.environ.get("RAW_DATA_PATH", "data/raw/properties.json")
+    curated_path = os.environ.get("CURATED_DATA_PATH", "data/curated/properties.parquet")
     spark = create_spark_session()
     try:
-        properties = load_properties(spark)
+        properties = load_properties(spark, raw_path)
         print(f"Registros lidos: {properties.count()}")
 
         curated = transform_properties(properties)
@@ -118,7 +132,7 @@ def main():
         curated.printSchema()
         curated.show(10, truncate=False)
         validate_curated_data(curated)
-        save_curated_data(curated)
+        save_curated_data(curated, curated_path)
     finally:
         spark.stop()
 
